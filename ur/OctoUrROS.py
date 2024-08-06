@@ -1,4 +1,13 @@
+#!/usr/bin/env python
+# -- coding: utf-8 --
+
 from __future__ import print_function, division, absolute_import
+import rospy
+
+from std_msgs.msg import String
+from geometry_msgs.msg import Point, Quaternion
+from octo_ur.msg import Action, Observation
+
 import os
 import math
 import numpy as np
@@ -56,6 +65,20 @@ def axisangle2quat(vec, eps=1e-6):
     return quat
 
 
+class Octo:
+    def __init__(self) -> None:
+        self.action_sub = rospy.Subscriber('/Action', Action, self.callback_action, queue_size=1)
+        self.grip = None
+        self.pose = Point()
+        self.orientation = Quaternion()
+
+    def callback_action(self, msg):
+        action = msg.split()
+        self.grip = action[0]
+        self.pose = action[1:4]
+        self.orientation = axisangle2quat(action[4:])
+    
+
 def orientation_error(desired, current):
     cc = quat_conjugate(current)
     q_r = quat_mul(desired, cc)
@@ -71,6 +94,36 @@ def control_ik_j(dpose, j_eef, num_envs, device, damping):
 
 
 def main():
+    rospy.init_node("Ur")
+    rate = rospy.Rate(30)
+
+    observation_pub = rospy.Publisher('/Observation', Observation, queue_size=1)
+
+    def ObsPub(image, grip, joint, cur_pos, cur_rot):
+        obs = Observation()
+
+        obs.image = []
+        for i in range(256):
+            for j in range(256):
+                p = Point()
+                p.x = image[i,j,0]
+                p.y = image[i,j,1]
+                p.z = image[i,j,2]
+                obs.image.append(p)
+
+        obs.grip = grip
+        obs.joint = joint
+        obs.pose.translation.x = cur_pos[0]
+        obs.pose.translation.y = cur_pos[1]
+        obs.pose.translation.z = cur_pos[2]
+        obs.pose.rotation.x = cur_rot[0]
+        obs.pose.rotation.y = cur_rot[1]
+        obs.pose.rotation.z = cur_rot[2]
+        obs.pose.rotation.w = cur_rot[3]
+        observation_pub.publish(obs)
+
+    octo = Octo()
+
     gym = gymapi.acquire_gym()
 
     sim_type = gymapi.SIM_PHYSX
@@ -80,7 +133,7 @@ def main():
     sim_params.gravity = gymapi.Vec3(0.0, 0.0, -9.81)
     sim_params.dt = 1 / 60
     sim_params.substeps = 2
-    sim_params.use_gpu_pipeline = True
+    sim_params.use_gpu_pipeline = False
 
     sim_params.physx.num_position_iterations = 22
     sim_params.physx.num_velocity_iterations = 1
@@ -103,9 +156,9 @@ def main():
 
     gym.add_ground(sim, plane_params)
 
-    asset_file = 'model.urdf'
-    bowl_asset_root = '/home/choiyj/isaacgym/assets/urdf/YCB_assets/urdf/024_bowl'
-    bottle_asset_root = '/home/choiyj/isaacgym/assets/urdf/YCB_assets/urdf/021_bleach_cleanser'
+    asset_root = ''
+    bowl_asset_file = '/home/choiyj/isaacgym/assets/urdf/YCB_assets/urdf/024_bowl/model.urdf'
+    bottle_asset_file = '/home/choiyj/isaacgym/assets/urdf/YCB_assets/urdf/021_bleach_cleanser/model.urdf'
 
     asset_options = gymapi.AssetOptions()
     asset_options.fix_base_link = False
@@ -114,8 +167,8 @@ def main():
 
     spawn_height = gymapi.Vec3(0, 0, 0.3)
 
-    bowl_asset = gym.load_asset(sim, bowl_asset_root, asset_file, asset_options)
-    bottle_asset = gym.load_asset(sim, bottle_asset_root, asset_file, asset_options)
+    bowl_asset = gym.load_asset(sim, asset_root, bowl_asset_file, asset_options)
+    bottle_asset = gym.load_asset(sim, asset_root, bottle_asset_file, asset_options)
 
     cam_x = 2
     cam_y = 1
@@ -123,10 +176,10 @@ def main():
     cam_pos = gymapi.Vec3(cam_x, cam_y, cam_z)
     cam_target = gymapi.Vec3(-cam_x, -cam_y, cam_z)
 
-    # viewer = gym.create_viewer(sim, gymapi.CameraProperties())
-    # if viewer is None:
-    #     print("*** Failed to create viewer")
-    #     quit()
+    viewer = gym.create_viewer(sim, gymapi.CameraProperties())
+    if viewer is None:
+        print("*** Failed to create viewer")
+        quit()
 
     table_dims = gymapi.Vec3(2.0, 2.0, 0.4)
 
@@ -144,7 +197,7 @@ def main():
 
     table_asset = gym.create_box(sim, table_dims.x, table_dims.y, table_dims.z, asset_options)
 
-    ur_asset_root = "/home/choiyj/octo_ur/ur_description/ur5_rg2_ign/urdf"
+    ur_asset_root = "/home/choiyj/catkin_ws/src/rl_study/src/ur/ur_description/ur5_rg2_ign/urdf"
     ur_asset_file = "ur5_rg2.urdf"
 
     ur_asset_options = gymapi.AssetOptions()
@@ -235,7 +288,7 @@ def main():
     bottle_handle = gym.create_actor(env, bottle_asset, bottle_pose, "bottle", 0, 0)
     # gym.set_rigid_body_color(env, bottle_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION)
 
-    # gym.viewer_camera_look_at(viewer, env, cam_pos, cam_target)
+    gym.viewer_camera_look_at(viewer, env, cam_pos, cam_target)
 
     gym.prepare_sim(sim)
 
@@ -284,76 +337,102 @@ def main():
 
     grip_closed = 1
 
-    while True:
-        print("=====================================")
+    while not rospy.is_shutdown():
+        while not gym.query_viewer_has_closed(viewer):
+            print("=====================================")
 
-        # step the physics
-        gym.simulate(sim)
-        gym.fetch_results(sim, True)
+            # step the physics
+            gym.simulate(sim)
+            gym.fetch_results(sim, True)
 
-        gym.render_all_camera_sensors(sim)
-        gym.start_access_image_tensors(sim)
+            gym.render_all_camera_sensors(sim)
+            gym.start_access_image_tensors(sim)
 
-        camera_rgba_debug_fig = plt.figure("CAMERA_RGB_DEBUG")
-        camera_rgba_image = camera_visulization(is_depth_image=False)
+            camera_rgba_debug_fig = plt.figure("CAMERA_RGB_DEBUG")
+            camera_rgba_image = camera_visulization(is_depth_image=False)
 
-        gym.refresh_rigid_body_state_tensor(sim)
-        gym.refresh_dof_state_tensor(sim)
-        gym.refresh_jacobian_tensors(sim)
-        gym.refresh_mass_matrix_tensors(sim)
+            gym.refresh_rigid_body_state_tensor(sim)
+            gym.refresh_dof_state_tensor(sim)
+            gym.refresh_jacobian_tensors(sim)
+            gym.refresh_mass_matrix_tensors(sim)
 
-        pos_cur = rb_states[gripper_idx, :3]
-        rot_cur = rb_states[gripper_idx, 3:7]
-        vel_cur = rb_states[gripper_idx, 7:]
+            pos_cur = rb_states[gripper_idx, :3]
+            rot_cur = rb_states[gripper_idx, 3:7]
+            vel_cur = rb_states[gripper_idx, 7:]
 
-        plt.imshow(camera_rgba_image)
-        plt.pause(1e-9) 
+            plt.imshow(camera_rgba_image)
+            plt.pause(1e-9) 
 
-        if True:
-            print("Octo Model is not ready.")
-            print('joint: ', dof_pos.view(1,-1)[0,:6])
-            print('pos  : ', pos_cur)
-            print('rot  : ', rot_cur)
+            ObsPub(camera_rgba_image, grip_closed, dof_pos.view(1,-1)[0,:6], pos_cur, rot_cur)
+
+            if octo.grip is None:
+                print("Octo Model is not ready.")
+                print('joint: ', dof_pos.view(1,-1)[0,:6])
+                print('pos  : ', pos_cur)
+                print('rot  : ', rot_cur)
+
+                # update the viewer
+                gym.step_graphics(sim)
+                gym.draw_viewer(viewer, sim, True)
+
+                # Wait for dt to elapse in real time.
+                # This synchronizes the physics simulation with the rendering rate.
+                gym.sync_frame_time(sim)
+
+                continue
+
+            rot_des[:, 0] = octo.orientation.x
+            rot_des[:, 1] = octo.orientation.y
+            rot_des[:, 2] = octo.orientation.z
+            rot_des[:, 3] = octo.orientation.w
+
+            pos_des[:, 0] = octo.pose.x
+            pos_des[:, 1] = octo.pose.y
+            pos_des[:, 2] = octo.pose.z
+
+            print('pos_des : ', pos_des)
+            cur = [rot_cur[:,0],rot_cur[:,1],rot_cur[:,2],rot_cur[:,3]]
+
+            print('pos_cur : ', pos_cur)
+
+            pos_err = 1 * (pos_des - pos_cur)
+            rot_err = orientation_error(rot_des, rot_cur)
+            dpose = torch.cat([pos_err, rot_err], -1).unsqueeze(-1)
+
+            print('pos_err : ', pos_err)
+
+            pos_action[:, :6] = dof_pos.squeeze(-1)[:, :6] + control_ik_j(dpose, j_eef, 1, DEVICE, damping)
+            print('pos_action : ', pos_action[:, :6])
+
+            if octo.grip == 1:
+                grip_closed = 1
+                pos_action[:, 7] = (ur5e_dof_props["lower"][7].item())
+                pos_action[:, 8] = (ur5e_dof_props["lower"][8].item())
+            elif octo.grip == -1:
+                grip_closed = 0         
+                pos_action[:, 7] = (ur5e_dof_props["upper"][7].item())*0.5
+                pos_action[:, 8] = (ur5e_dof_props["upper"][8].item())*0.5
+            else:     
+                if grip_closed == 1:
+                    pos_action[:, 7] = (ur5e_dof_props["lower"][7].item())
+                    pos_action[:, 8] = (ur5e_dof_props["lower"][8].item())
+                else:
+                    pos_action[:, 7] = (ur5e_dof_props["upper"][7].item())*0.5
+                    pos_action[:, 8] = (ur5e_dof_props["upper"][8].item())*0.5
+
+            gym.set_dof_position_target_tensor(sim, gymtorch.unwrap_tensor(pos_action))
 
             # update the viewer
             gym.step_graphics(sim)
-            print("=====================================")
-            # gym.draw_viewer(viewer, sim, True)
-            print("=====================================")
+            gym.draw_viewer(viewer, sim, True)
 
             # Wait for dt to elapse in real time.
             # This synchronizes the physics simulation with the rendering rate.
-            # gym.sync_frame_time(sim)
-            print("=====================================")
-
-            continue
-
-        print('pos_des : ', pos_des)
-        cur = [rot_cur[:,0],rot_cur[:,1],rot_cur[:,2],rot_cur[:,3]]
-
-        print('pos_cur : ', pos_cur)
-
-        pos_err = 1 * (pos_des - pos_cur)
-        rot_err = orientation_error(rot_des, rot_cur)
-        dpose = torch.cat([pos_err, rot_err], -1).unsqueeze(-1)
-
-        print('pos_err : ', pos_err)
-
-        pos_action[:, :6] = dof_pos.squeeze(-1)[:, :6] + control_ik_j(dpose, j_eef, 1, DEVICE, damping)
-        print('pos_action : ', pos_action[:, :6])
-
-        gym.set_dof_position_target_tensor(sim, gymtorch.unwrap_tensor(pos_action))
-
-        # update the viewer
-        gym.step_graphics(sim)
-        gym.draw_viewer(viewer, sim, True)
-
-        # Wait for dt to elapse in real time.
-        # This synchronizes the physics simulation with the rendering rate.
-        gym.sync_frame_time(sim)
+            gym.sync_frame_time(sim)
+            rate.sleep()
             
-    gym.destroy_viewer(viewer)
-    gym.destroy_sim(sim)
+        gym.destroy_viewer(viewer)
+        gym.destroy_sim(sim)
 
    
 if __name__ == "__main__":

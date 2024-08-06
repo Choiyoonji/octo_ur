@@ -9,6 +9,9 @@ from isaacgym import gymapi
 from isaacgym.torch_jit_utils import quat_mul, to_torch, tensor_clamp
 
 
+Headless = True
+
+
 @torch.jit.script
 def axisangle2quat(vec, eps=1e-6):
     """
@@ -103,10 +106,12 @@ class IsaacUR5eBottle(gym.Env):
         cam_pos = gymapi.Vec3(cam_x, cam_y, cam_z)
         cam_target = gymapi.Vec3(-cam_x, -cam_y, cam_z)
 
-        self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
-        if self.viewer is None:
-            print("*** Failed to create viewer")
-            quit()
+        if not Headless:
+
+            self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
+            if self.viewer is None:
+                print("*** Failed to create viewer")
+                quit()
 
         self.create_ground_plane()
 
@@ -120,7 +125,8 @@ class IsaacUR5eBottle(gym.Env):
 
         self.create_env()
 
-        self.gym.viewer_camera_look_at(self.viewer, self.env, cam_pos, cam_target)
+        if not Headless:
+            self.gym.viewer_camera_look_at(self.viewer, self.env, cam_pos, cam_target)
 
         self.gym.prepare_sim(self.sim)
 
@@ -380,7 +386,9 @@ class IsaacUR5eBottle(gym.Env):
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.pos_action))
 
         self.simulate()
-        self.render()
+        
+        if not Headless:
+            self.render()
 
         obs = self.get_obs()
 
@@ -390,10 +398,10 @@ class IsaacUR5eBottle(gym.Env):
         # step the physics
         self.gym.simulate(self.sim)
         self.gym.fetch_results(self.sim, True)
+        self.gym.step_graphics(self.sim)
 
     def render(self):
         # update viewer
-        self.gym.step_graphics(self.sim)
         self.gym.draw_viewer(self.viewer, self.sim, True)
         self.gym.sync_frame_time(self.sim)
 
