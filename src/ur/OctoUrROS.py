@@ -156,9 +156,9 @@ def main():
 
     gym.add_ground(sim, plane_params)
 
-    asset_root = ''
-    bowl_asset_file = '/home/choiyj/isaacgym/assets/urdf/YCB_assets/urdf/024_bowl/model.urdf'
-    bottle_asset_file = '/home/choiyj/isaacgym/assets/urdf/YCB_assets/urdf/021_bleach_cleanser/model.urdf'
+    asset_file = 'model.urdf'
+    bowl_asset_root = '/home/choiyj/isaacgym/assets/urdf/YCB_assets/urdf/024_bowl'
+    bottle_asset_root = '/home/choiyj/isaacgym/assets/urdf/YCB_assets/urdf/021_bleach_cleanser'
 
     asset_options = gymapi.AssetOptions()
     asset_options.fix_base_link = False
@@ -167,14 +167,14 @@ def main():
 
     spawn_height = gymapi.Vec3(0, 0, 0.3)
 
-    bowl_asset = gym.load_asset(sim, asset_root, bowl_asset_file, asset_options)
-    bottle_asset = gym.load_asset(sim, asset_root, bottle_asset_file, asset_options)
+    bowl_asset = gym.load_asset(sim, bowl_asset_root, asset_file, asset_options)
+    bottle_asset = gym.load_asset(sim, bottle_asset_root, asset_file, asset_options)
 
-    cam_x = 2
-    cam_y = 1
-    cam_z = 1
+    cam_x = 1.5
+    cam_y = 0.3
+    cam_z = 2
     cam_pos = gymapi.Vec3(cam_x, cam_y, cam_z)
-    cam_target = gymapi.Vec3(-cam_x, -cam_y, cam_z)
+    cam_target = gymapi.Vec3(-cam_x, -cam_y, -cam_z/2)
 
     viewer = gym.create_viewer(sim, gymapi.CameraProperties())
     if viewer is None:
@@ -390,13 +390,8 @@ def main():
             pos_des[:, 1] = octo.pose.y
             pos_des[:, 2] = octo.pose.z
 
-            print('pos_des : ', pos_des)
-            cur = [rot_cur[:,0],rot_cur[:,1],rot_cur[:,2],rot_cur[:,3]]
-
-            print('pos_cur : ', pos_cur)
-
-            pos_err = 1 * (pos_des - pos_cur)
-            rot_err = orientation_error(rot_des, rot_cur)
+            pos_err = pos_des
+            rot_err = orientation_error(rot_des + rot_cur, rot_cur)
             dpose = torch.cat([pos_err, rot_err], -1).unsqueeze(-1)
 
             print('pos_err : ', pos_err)

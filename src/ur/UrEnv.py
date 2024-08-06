@@ -73,7 +73,6 @@ class IsaacUR5eBottle(gym.Env):
         self._im_size = im_size
         self._rng = np.random.default_rng(1234)
 
-
         self.gym = gymapi.acquire_gym()
 
         self.sim = None
@@ -111,7 +110,7 @@ class IsaacUR5eBottle(gym.Env):
             self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
             if self.viewer is None:
                 print("*** Failed to create viewer")
-                quit()
+                quit() 
 
         self.create_ground_plane()
 
